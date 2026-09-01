@@ -24,18 +24,27 @@ function TrendChart({ exams }) {
   const line = pts.map(p => `${p.x},${p.y}`).join(' ');
   const goalY = H - PAD - (GOAL.total - min) / span * (H - PAD * 2);
   const lineY = H - PAD - (GOAL.line - min) / span * (H - PAD * 2);
+  const baseY = H - PAD;
+  const area = `${PAD},${baseY} ` + pts.map(p => `${p.x},${p.y}`).join(' ') + ` ${W - PAD},${baseY}`;
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} className="trend" preserveAspectRatio="xMidYMid meet">
+      <defs>
+        <linearGradient id="trendFill" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#2563eb" stopOpacity="0.22" />
+          <stop offset="100%" stopColor="#2563eb" stopOpacity="0.02" />
+        </linearGradient>
+      </defs>
       <line x1={PAD} y1={goalY} x2={W - PAD} y2={goalY} stroke="#7c3aed" strokeWidth="1.4" strokeDasharray="5 4" />
-      <text x={W - PAD} y={goalY - 5} fontSize="10" fill="#7c3aed" textAnchor="end">目标 145</text>
+      <text x={W - PAD} y={goalY - 5} fontSize="10" fill="#7c3aed" textAnchor="end" fontWeight="600">目标 145</text>
       <line x1={PAD} y1={lineY} x2={W - PAD} y2={lineY} stroke="#94a3b8" strokeWidth="1.2" strokeDasharray="3 4" />
       <text x={W - PAD} y={lineY + 13} fontSize="10" fill="#94a3b8" textAnchor="end">B类线 105</text>
+      <polygon points={area} fill="url(#trendFill)" />
       <polyline points={line} fill="none" stroke="#2563eb" strokeWidth="2.4" strokeLinejoin="round" strokeLinecap="round" />
       {pts.map((p, i) => (
         <g key={i}>
-          <circle cx={p.x} cy={p.y} r="4" fill="#fff" stroke="#2563eb" strokeWidth="2" />
-          <text x={p.x} y={p.y - 9} fontSize="10.5" fill="#1e293b" textAnchor="middle" fontWeight="700">{p.e.total}</text>
+          <circle cx={p.x} cy={p.y} r="4.5" fill="#fff" stroke="#2563eb" strokeWidth="2" />
+          <text x={p.x} y={p.y - 10} fontSize="10.5" fill="#1e293b" textAnchor="middle" fontWeight="700">{p.e.total}</text>
           <text x={p.x} y={H - 6} fontSize="9.5" fill="#94a3b8" textAnchor="middle">{fmtMD(p.e.date)}</text>
         </g>
       ))}
