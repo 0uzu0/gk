@@ -1,0 +1,40 @@
+# ============================================================
+# 江苏省考B类法学岗备考工作台 - Docker Compose 部署
+#
+# 用法：
+#   启动：  docker compose up -d --build
+#   停止：  docker compose down
+#   日志：  docker compose logs -f
+#   更新：  （改了 src/ 代码后）docker compose up -d --build
+#   访问：  http://<服务器IP>:8080
+#
+# 注意：应用数据（打卡/错题/模考/图片）存在【访问者浏览器】的
+# localStorage/IndexedDB 里，不在容器内。换设备/换浏览器访问时，
+# 用工作台「数据管理 → 导出备份」导出 JSON，再在新浏览器导入。
+# 可把备份 JSON 放入宿主机 backups/ 目录并挂载，便于集中留存。
+# ============================================================
+
+services:
+  gk-workbench:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: gk-workbench:latest
+    container_name: gk-workbench
+    ports:
+      - "8080:80"            # 左侧端口可按需修改，如 "9090:80"
+    restart: unless-stopped  # 开机自启、崩溃自动拉起
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    volumes:
+      # 可选：宿主机备份目录（存放导出的 JSON 备份，方便多端留存）
+      - ./backups:/backups:ro
+    # 如需限制资源（可选）：
+    # deploy:
+    #   resources:
+    #     limits:
+    #       memory: 128M

@@ -1,0 +1,20 @@
+{
+  "name": "gk-workbench",
+  "private": true,
+  "version": "2.0.0",
+  "type": "module",
+  "description": "江苏省考B类法学岗备考工作台（React 重构版）",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^5.0.0",
+    "vite": "^7.0.0",
+    "vite-plugin-singlefile": "^2.2.0"
+  }
+}

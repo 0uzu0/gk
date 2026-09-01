@@ -1,0 +1,13 @@
+# 构建上下文排除：减小镜像构建上下文体积，避免把本地产物/依赖打进镜像
+node_modules
+dist
+.git
+.gitignore
+*.md
+_unit_test.mjs
+_smoke_test.mjs
+_edge_profile*
+_shot*.png
+Dockerfile
+docker-compose.yml
+.dockerignore

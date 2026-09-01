@@ -1,0 +1,118 @@
+# ============================================================
+# 江苏省考B类法学岗备考工作台 - CI 自动打包
+#
+# 触发条件：
+#   1. push 到 main 分支        → 构建 + 上传构建产物 + 推送 Docker 镜像到 GHCR
+#   2. 推送 v* 标签（如 v2.0.0）→ 上述全部 + 挂到 GitHub Release
+#   3. 手动触发（workflow_dispatch）
+#
+# 产物：
+#   - gk-workbench-v{版本号}.html  单文件应用（可在任意浏览器直接打开）
+#   - ghcr.io/{owner}/{repo}       Docker 镜像（nginx 静态服务）
+# ============================================================
+
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+# 同一分支新推送取消旧任务，节省 runner 时间
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write   # tag 时创建 Release 并上传产物
+  packages: write   # 推送镜像到 GHCR
+
+jobs:
+  build:
+    name: 构建单文件应用
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Node 22（带 npm 缓存）
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: 安装依赖
+        run: npm ci --no-audit --no-fund
+
+      - name: 单元测试
+        run: node _unit_test.mjs
+
+      - name: 构建（vite-plugin-singlefile 产出单 HTML）
+        run: npm run build
+
+      - name: 校验产物并重命名
+        run: |
+          test -f dist/index.html || { echo "构建失败：dist/index.html 不存在"; exit 1; }
+          VERSION=$(node -p "require('./package.json').version")
+          SIZE=$(du -h dist/index.html | cut -f1)
+          cp dist/index.html "gk-workbench-v${VERSION}.html"
+          echo "产物：gk-workbench-v${VERSION}.html（${SIZE}）"
+
+      - name: 上传构建产物（Actions Artifacts）
+        uses: actions/upload-artifact@v4
+        with:
+          name: gk-workbench-html
+          path: gk-workbench-v*.html
+          retention-days: 90
+          if-no-files-found: error
+
+      - name: 附到 GitHub Release（仅打 tag 时）
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: gk-workbench-v*.html
+          generate_release_notes: true
+
+  docker:
+    name: 构建并推送 Docker 镜像
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 准备 QEMU（多架构支持）
+        uses: docker/setup-qemu-action@v3
+
+      - name: 准备 Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 登录 GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 生成镜像标签
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha
+
+      - name: 构建并推送
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
