@@ -5,9 +5,18 @@
 
 export const AI_PROVIDERS = [
   { key: 'deepseek', label: 'DeepSeek（推荐，便宜）', baseUrl: 'https://api.deepseek.com', model: 'deepseek-chat' },
-  { key: 'qwen',     label: '通义千问',               baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-plus' },
+  { key: 'qwen',     label: '通义千问（纯文字）',      baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-plus' },
+  { key: 'qwen-vl',  label: '通义千问 VL（能看图）',   baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-vl-max', vision: true },
   { key: 'custom',   label: '自定义（OpenAI兼容）',    baseUrl: '', model: '' }
 ];
+
+/* 当前配置是否支持图片输入（决定错题解析是否带图） */
+export function providerSupportsVision(cfg) {
+  if (!cfg) return false;
+  if (cfg.provider === 'custom') return !!cfg.vision;
+  const p = AI_PROVIDERS.find(x => x.key === cfg.provider);
+  return !!(p && p.vision);
+}
 
 export function resolveBaseUrl(cfg) {
   const p = AI_PROVIDERS.find(x => x.key === cfg.provider);
@@ -81,7 +90,8 @@ export function shenlunMessages(type, score, req, answer) {
   ];
 }
 
-export function mistakeMessages(m) {
+/* 错题解析：有图片时用图文混合消息（OpenAI 兼容多模态格式，最多带 2 张） */
+export function mistakeMessages(m, imgs) {
   const user = [
     '请作为公考培训讲师解析下面这道错题，输出 Markdown，包含：## 考点定位、## 正确思路、## 我的错因、## 避坑提醒。',
     '',
@@ -92,8 +102,90 @@ export function mistakeMessages(m) {
     m.note ? '我自己的记录：' + m.note : '',
     ''
   ].join('\n');
+  if (imgs && imgs.length) {
+    const content = [{ type: 'text', text: user }];
+    imgs.slice(0, 2).forEach(u => content.push({ type: 'image_url', image_url: { url: u } }));
+    return [
+      { role: 'system', content: '你是资深公考培训讲师，讲解要精炼、直击要害，控制在 400 字以内。图片是题目原题，请结合原题解析。' },
+      { role: 'user', content }
+    ];
+  }
   return [
     { role: 'system', content: '你是资深公考培训讲师，讲解要精炼、直击要害，控制在 400 字以内。' },
+    { role: 'user', content: user }
+  ];
+}
+
+/* 错题模式画像：全部错题打包 → 共性错误聚类 + 薄弱定位 + 训练清单 */
+export function mistakeProfileMessages(mistakes) {
+  const lines = ['请基于以下错题记录做错误模式分析，输出 Markdown，必须包含：## 错误模式聚类、## 薄弱环节定位、## 下周针对性训练清单。'];
+  lines.push('');
+  if (!mistakes || !mistakes.length) {
+    lines.push('（暂无错题记录，请提示先在错题本录入错题）');
+  } else {
+    const bySub = {}, byErr = {};
+    mistakes.forEach(m => {
+      if (m.sub) bySub[m.sub] = (bySub[m.sub] || 0) + 1;
+      if (m.err) byErr[m.err] = (byErr[m.err] || 0) + 1;
+    });
+    lines.push('【错题分布】');
+    lines.push('- 按科目：' + Object.entries(bySub).map(([k, v]) => k + ' ' + v + '条').join('、'));
+    lines.push('- 按错因：' + Object.entries(byErr).map(([k, v]) => k + ' ' + v + '条').join('、'));
+    lines.push('');
+    lines.push('【错题明细】（最近 60 条）');
+    mistakes.slice().sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, 60).forEach((m, i) => {
+      const st = m.state === 'done' ? '已掌握' : m.state === 'redo' ? '已重做' : '待重做';
+      lines.push((i + 1) + '. [' + m.sub + '｜' + m.err + '｜' + st + '] ' + m.knowledge + (m.note ? '——' + String(m.note).slice(0, 50) : ''));
+    });
+  }
+  lines.push('');
+  lines.push('要求：聚类要指出共性根因（如公式混淆、规则记反、审题偏差、时间不够），训练清单具体到每天做什么，不超过 5 条。');
+  return [
+    { role: 'system', content: '你是公考教研专家，擅长从错题数据里找错误规律，分析要狠、准、可执行，600 字以内。' },
+    { role: 'user', content: lines.join('\n') }
+  ];
+}
+
+/* 变式题举一反三：基于错题考点原创 2 道变式题（含参考答案） */
+export function variantMessages(m) {
+  const user = [
+    '基于下面这道错题的考点，原创 2 道变式题（不要照抄原题），每道题包含：题目、参考答案、一句话考点提示。',
+    '输出 Markdown，格式：',
+    '## 变式题 1（题目 / 参考答案 / 考点提示）',
+    '## 变式题 2（题目 / 参考答案 / 考点提示）',
+    '',
+    '科目：' + m.sub,
+    '知识点：' + m.knowledge,
+    '我的错因类型：' + m.err,
+    m.source ? '题目来源：' + m.source : '',
+    m.note ? '我自己的记录：' + m.note : ''
+  ].filter(Boolean).join('\n');
+  return [
+    { role: 'system', content: '你是公考命题人，出的变式题要贴合江苏省考 B 类难度，答案准确、表述清晰。' },
+    { role: 'user', content: user }
+  ];
+}
+
+/* 真题变式题（结构化入库）：基于一道真题，产出可解析 JSON 的变式题，
+   存入真题库并继续「未做→做错→做对」循环追踪 */
+export function bankVariantMessages(q) {
+  const isSubjective = q.type === '主观题';
+  const user = [
+    '基于下面这道真题的考点，原创 2 道变式题（不要照抄原题），只输出一个 JSON 数组，不要任何多余文字或 Markdown 代码块。',
+    '每道题结构：' + (isSubjective
+      ? '{"stem":"题干","options":[],"answer":"参考答案要点","analysis":"解析","knowledge":"考点"}'
+      : '{"stem":"题干","options":["选项A","选项B","选项C","选项D"],"answer":"正确选项字母如B","analysis":"解析","knowledge":"考点"}'),
+    '',
+    '科目：' + q.sub,
+    '题型：' + q.type,
+    '知识点：' + (q.knowledge || ''),
+    '原题：' + q.stem,
+    q.options && q.options.length ? '原题选项：' + q.options.join(' / ') + '；答案：' + q.answer : '',
+    '',
+    '要求：难度贴近江苏 B 类；答案必须准确；直接输出 JSON 数组，形如 [{...},{...}]。'
+  ].filter(Boolean).join('\n');
+  return [
+    { role: 'system', content: '你是公考命题人，只输出合法 JSON 数组，不要 Markdown 围栏、不要解释。' },
     { role: 'user', content: user }
   ];
 }
@@ -173,4 +265,24 @@ export function mdToHtml(md) {
   }
   closeList();
   return out.join('\n');
+}
+
+/* ============================================================
+ * AI 解析写回错题笔记（幂等）
+ * 背景：此前每次点「存入错题笔记」都在原 note 后追加一段，
+ *       重复点击会堆出多份雷同解析。现按标记定位，已存在则整段替换。
+ * ============================================================ */
+export const AI_NOTE_TAG = '【AI 解析】';
+
+export function withAiNote(oldNote, aiText) {
+  const body = AI_NOTE_TAG + String(aiText || '').trim();
+  const src = String(oldNote || '');
+  const at = src.indexOf(AI_NOTE_TAG);
+  if (at === -1) return (src.replace(/\s+$/, '') ? src.replace(/\s+$/, '') + '\n\n' : '') + body;
+  return src.slice(0, at).replace(/\s+$/, '') + '\n\n' + body;
+}
+
+/* 笔记中是否已有 AI 解析（用于按钮文案与重复提示） */
+export function hasAiNote(note) {
+  return String(note || '').indexOf(AI_NOTE_TAG) !== -1;
 }

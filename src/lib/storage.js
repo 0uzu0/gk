@@ -3,7 +3,7 @@
  * v1 → v2：加 schema_version；旧错题图片 base64 迁 IndexedDB
  *          （迁移时生成 img id 引用，base64 转存 imgstore，由 App 异步执行）
  * ============================================================ */
-import { uid } from './templates.js';
+import { uid, imgId as newImgId } from './id.js';
 import { DEFAULT_EXAM_DATE } from './dates.js';
 
 export const SCHEMA_VERSION = 2;
@@ -47,13 +47,57 @@ export function demoReviews() {
   }];
 }
 
+/* 真题库示例（无数据时展示，可一键清除） */
+export function demoQuestions() {
+  return [
+    {
+      id: uid(), date: '2026-09-01', sub: '资料分析', type: '单选题',
+      stem: '2021年全国规模以上工业企业实现利润总额 87092 亿元，比上年增长 34.3%，比 2019 年增长 39.7%，两年平均增长 18.2%。问：2020 年全国规模以上工业企业实现利润总额约为多少亿元？',
+      options: ['约 58000', '约 64700', '约 72500', '约 76000'],
+      answer: 'B', analysis: '基期 = 87092 / (1+34.3%) ≈ 64840，选 B。基期量 = 现期 / (1+增长率)。',
+      knowledge: '基期量计算', source: '示例题·资料分析', imgs: [], demo: true
+    },
+    {
+      id: uid(), date: '2026-09-01', sub: '判断推理', type: '单选题',
+      stem: '所有的镇干部都要下村走访，老张是镇干部。由此可以推出：',
+      options: ['老张要下村走访', '老张不用下村走访', '下村走访的都是镇干部', '无法推出任何结论'],
+      answer: 'A', analysis: '三段论：所有 A 是 B，某个 x 是 A → x 是 B。肯前必肯后。',
+      knowledge: '翻译推理·三段论', source: '示例题·判断推理', imgs: [], demo: true
+    },
+    {
+      id: uid(), date: '2026-09-01', sub: '数量-数推', type: '单选题',
+      stem: '3，5，9，17，33，（ ）',
+      options: ['57', '63', '65', '69'],
+      answer: 'C', analysis: '相邻两项差为 2,4,8,16,32（等比），33+32=65。做差观察。',
+      knowledge: '多级等差数列', source: '示例题·数字推理', imgs: [], demo: true
+    },
+    {
+      id: uid(), date: '2026-09-01', sub: '常识', type: '单选题',
+      stem: '根据《行政处罚法》，下列属于行政处罚种类的是：',
+      options: ['罚金', '警告', '拘留', '责令赔偿损失'],
+      answer: 'B', analysis: '罚金是刑罚，拘留分刑事/行政（行政拘留是处罚但选项不明确），警告是行政处罚法定种类。',
+      knowledge: '行政处罚种类', source: '示例题·常识法律', imgs: [], demo: true
+    },
+    {
+      id: uid(), date: '2026-09-01', sub: '申论小题', type: '主观题',
+      stem: '根据给定资料，概括 S 市推进基层网格化治理的主要做法。（15分，200字以内）',
+      options: [],
+      answer: '参考要点：1. 划分网格，明确责任到人；2. 建立信息平台，闭环处置；3. 整合多方力量进网格；4. 健全考核激励机制。',
+      analysis: '归纳概括：动宾结构提炼，分条作答，每条以做法为核心。',
+      knowledge: '归纳概括', source: '示例题·申论', imgs: [], demo: true
+    }
+  ];
+}
+
 export function emptyState() {
   return {
     schema_version: SCHEMA_VERSION,
     tasks: [],
     exams: [],
     mistakes: [],
-    reviews: []
+    reviews: [],
+    questions: [],
+    attempts: []
   };
 }
 
@@ -63,7 +107,18 @@ export function demoState() {
     tasks: demoTasks(),
     exams: demoExams(),
     mistakes: demoMistakes(),
-    reviews: demoReviews()
+    reviews: demoReviews(),
+    questions: demoQuestions(),
+    attempts: []
+  };
+}
+
+/* 旧 v2 数据缺 questions/attempts 字段时补默认（向后兼容，不 bump 版本） */
+function normalizeState(s) {
+  return {
+    ...s,
+    questions: Array.isArray(s.questions) ? s.questions : [],
+    attempts: Array.isArray(s.attempts) ? s.attempts : []
   };
 }
 
@@ -84,20 +139,20 @@ export function migrateV1(raw) {
     if (!imgs.length) return { ...m, imgs: [] };
     const ids = [];
     imgs.forEach((b64, i) => {
-      const imgId = 'img_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8) + '_' + i;
-      ids.push(imgId);
-      pendingImgs.push({ imgId, dataUrl: b64 });
+      const iid = newImgId(i);
+      ids.push(iid);
+      pendingImgs.push({ imgId: iid, dataUrl: b64 });
     });
     return { ...m, imgs: ids };
   });
   return {
-    state: {
+    state: normalizeState({
       schema_version: SCHEMA_VERSION,
       tasks: tasks.map(t => ({ id: t.id, date: t.date, title: t.title, time: t.time || '', cat: t.cat || '其他', done: !!t.done, demo: !!t.demo, auto: !!t.auto })),
       exams: Array.isArray(raw.exams) ? raw.exams : [],
       mistakes: m2,
       reviews: Array.isArray(raw.reviews) ? raw.reviews : []
-    },
+    }),
     pendingImgs
   };
 }
@@ -108,7 +163,7 @@ export function initState() {
     const v2 = localStorage.getItem(LS_KEY);
     if (v2) {
       const parsed = JSON.parse(v2);
-      if (parsed && parsed.schema_version === SCHEMA_VERSION) return { state: parsed, pendingImgs: [] };
+      if (parsed && parsed.schema_version === SCHEMA_VERSION) return { state: normalizeState(parsed), pendingImgs: [] };
       // 低版本 v2（无版本字段）→ 按 v1 兜底
       if (parsed && typeof parsed === 'object' && Array.isArray(parsed.tasks)) {
         const mig = migrateV1(parsed);
@@ -181,8 +236,12 @@ export function downloadJSON(data, filename) {
   setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 300);
 }
 
-/* 解析导入文件：返回 {state, images} 或抛错 */
-export async function parseImport(file) {
+/*
+ * 解析导入文件：返回 {state, imageCount} 或抛错。
+ * imgStore 由调用方注入（保持 storage 不反向依赖 imgstore，避免循环依赖）；
+ * 未注入时跳过图片写入，但仍返回 imageCount —— 保证纯数据备份照样能恢复。
+ */
+export async function parseImport(file, imgStore) {
   const text = await file.text();
   const data = JSON.parse(text);
   if (!data || data.app !== 'wb_gk_2027' || !data.state) throw new Error('不是本工作台的备份文件');
@@ -192,10 +251,12 @@ export async function parseImport(file) {
     if (mig) state = mig.state;
     else throw new Error('备份文件版本不兼容');
   }
-  // 图片写入 imgstore
-  const images = data.images || {};
-  await Promise.all(Object.keys(images).map(k => imgStore.put(k, images[k])));
-  return { state, imageCount: Object.keys(images).length };
+  const images = (data.images && typeof data.images === 'object') ? data.images : {};
+  const keys = Object.keys(images);
+  if (imgStore && typeof imgStore.put === 'function' && keys.length) {
+    await Promise.all(keys.map(k => imgStore.put(k, images[k])));
+  }
+  return { state: normalizeState(state), imageCount: keys.length };
 }
 
 export function getExamDate() {

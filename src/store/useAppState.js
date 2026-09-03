@@ -2,13 +2,17 @@
  * useAppState.js —— 全局状态（useReducer + localStorage 持久化）
  * 单向数据流：dispatch(action) → reducer → state → 自动保存
  * ============================================================ */
-import { useReducer, useEffect, useMemo, useRef } from 'react';
+import { useReducer, useEffect, useMemo, useRef, useState } from 'react';
 import {
   initState, saveState, emptyState, demoState,
   finalizeImgMigration, getExamDate, setExamDate
 } from '../lib/storage.js';
 import { imgStore } from '../lib/imgstore.js';
-import { uid } from '../lib/templates.js';
+import { uid } from '../lib/id.js';
+
+/* 作答记录上限：只保留最近 N 条。
+   刷题是高频动作，attempts 只增不删会持续撑大 localStorage，最终触发配额写入失败。 */
+export const MAX_ATTEMPTS = 2000;
 
 function reducer(state, action) {
   switch (action.type) {
@@ -56,13 +60,32 @@ function reducer(state, action) {
     case 'DELETE_REVIEW':
       return { ...state, reviews: state.reviews.filter(r => r.id !== action.id) };
 
+    case 'ADD_QUESTIONS':
+      return { ...state, questions: state.questions.concat(action.questions) };
+
+    case 'UPDATE_QUESTION':
+      return { ...state, questions: state.questions.map(q => q.id === action.id ? { ...q, ...action.patch } : q) };
+
+    case 'DELETE_QUESTION':
+      return { ...state, questions: state.questions.filter(q => q.id !== action.id) };
+
+    case 'ADD_ATTEMPT': {
+      const next = state.attempts.concat(action.attempt);
+      return {
+        ...state,
+        attempts: next.length > MAX_ATTEMPTS ? next.slice(next.length - MAX_ATTEMPTS) : next
+      };
+    }
+
     case 'CLEAR_EXAMPLES':
       return {
         ...state,
         tasks: state.tasks.filter(t => !t.demo),
         exams: state.exams.filter(e => !e.demo),
         mistakes: state.mistakes.filter(m => !m.demo),
-        reviews: state.reviews.filter(r => !r.demo)
+        reviews: state.reviews.filter(r => !r.demo),
+        questions: state.questions.filter(q => !q.demo),
+        attempts: state.attempts.filter(a => !a.demo)
       };
 
     case 'CLEAR_ALL':
@@ -99,12 +122,15 @@ export function useAppState() {
   });
 
   const savedRef = useRef(false);
+  /* 写入失败（多为 localStorage 配额耗尽）不再静默，交由上层提示用户 */
+  const [saveError, setSaveError] = useState(null);
 
   // 持久化（跳过首轮因为首轮来自存储）
   useEffect(() => {
     if (!savedRef.current) { savedRef.current = true; return; }
     const { _pendingImgs, ...rest } = state;
-    saveState(rest);
+    const ok = saveState(rest);
+    setSaveError(ok ? null : '本地存储空间不足，本次改动可能未保存。建议到「数据管理」导出备份后清理旧数据。');
   }, [state]);
 
   // 异步：v1 图片迁移 → imgstore，完成后清理 pending
@@ -125,8 +151,8 @@ export function useAppState() {
   const api = useMemo(() => ({
     state,
     dispatch,
-    saveError: null
-  }), [state]);
+    saveError
+  }), [state, saveError]);
 
   return api;
 }
@@ -145,6 +171,10 @@ export const actions = {
   deleteMistake: id => ({ type: 'DELETE_MISTAKE', id }),
   addReview: review => ({ type: 'ADD_REVIEW', review }),
   deleteReview: id => ({ type: 'DELETE_REVIEW', id }),
+  addQuestions: questions => ({ type: 'ADD_QUESTIONS', questions }),
+  updateQuestion: (id, patch) => ({ type: 'UPDATE_QUESTION', id, patch }),
+  deleteQuestion: id => ({ type: 'DELETE_QUESTION', id }),
+  addAttempt: attempt => ({ type: 'ADD_ATTEMPT', attempt }),
   clearExamples: () => ({ type: 'CLEAR_EXAMPLES' }),
   clearAll: () => ({ type: 'CLEAR_ALL' }),
   setExamDate: date => ({ type: 'SET_EXAM_DATE', date }),
@@ -154,5 +184,5 @@ export const actions = {
 
 /* 验证 demo 示例是否应存在（无任何数据时展示示例） */
 export function hasAnyData(state) {
-  return (state.tasks.length + state.exams.length + state.mistakes.length + state.reviews.length) > 0;
+  return (state.tasks.length + state.exams.length + state.mistakes.length + state.reviews.length + state.questions.length) > 0;
 }

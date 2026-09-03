@@ -1,10 +1,12 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import TodayPanel from './components/TodayPanel.jsx';
 import ProgressPanel from './components/ProgressPanel.jsx';
 import ExamPanel from './components/ExamPanel.jsx';
 import MistakePanel from './components/MistakePanel.jsx';
 import AiPanel from './components/AiPanel.jsx';
 import DataPanel from './components/DataPanel.jsx';
+import QuestionBankPanel from './components/QuestionBankPanel.jsx';
+import QuizRunner from './components/QuizRunner.jsx';
 import { ToastProvider, useToast } from './components/Toast.jsx';
 import { useAppState, actions } from './store/useAppState.js';
 import { totalProgress, getStage, todayStr, diffDays, START_DATE } from './lib/dates.js';
@@ -16,6 +18,7 @@ const NAV = [
   { key: 'progress', label: '备考进度', ic: '📈', desc: '关键指标 · 阶段进度 · 目标拆解' },
   { key: 'exam', label: '模考复盘', ic: '📝', desc: '模考趋势 · 成绩记录 · 周复盘' },
   { key: 'mistake', label: '错题本', ic: '📌', desc: '错题归档 · 重做追踪 · 图片留存' },
+  { key: 'bank', label: '真题库', ic: '📚', desc: '上传题库 · 在线作答 · 举一反三' },
   { group: '工具' },
   { key: 'ai', label: 'AI 助手', ic: '✨', desc: '申论批改 · 错题解析 · 提分分析' },
   { key: 'data', label: '数据管理', ic: '🗄️', desc: '备份 · 导入 · 笔试日期' }
@@ -30,9 +33,12 @@ function getAiKey() {
 }
 
 function Shell() {
-  const { state, dispatch } = useAppState();
+  const { state, dispatch, saveError } = useAppState();
   const [tab, setTab] = useState('today');
   const [aiPrefill, setAiPrefill] = useState(null);
+  /* quiz: null = 未进入作答器（显示题库列表）
+     { preset } = 进入作答器；preset 为 {sub,count} 时直接开练，为 null 时先弹配置窗 */
+  const [quiz, setQuiz] = useState(null);
   const toast = useToast();
 
   const examDate = state.examDate || '2026-12-05';
@@ -51,7 +57,14 @@ function Shell() {
   const hasMistake = state.mistakes.some(m => m.state !== 'done');
   const hasAiKey = !!getAiKey();
 
+  /* 本地存储写入失败（配额耗尽）必须让用户知道，否则数据会静默丢失 */
+  useEffect(() => { if (saveError) toast(saveError, 'err'); }, [saveError]);
+
   const aiAnalyze = (mistake) => { setAiPrefill({ mistake }); setTab('ai'); };
+  const aiProfile = () => { setAiPrefill({ profile: true }); setTab('ai'); };
+
+  /* 跳到真题库开练：preset 为空 → 弹配置窗；preset 为 {sub,count} → 直接开练 */
+  const startQuiz = (preset) => { setQuiz({ preset: preset || null }); setTab('bank'); };
 
   return (
     <div className="app">
@@ -103,10 +116,15 @@ function Shell() {
         </div>
 
         <div className="content">
-          {tab === 'today' && <TodayPanel state={state} dispatch={dispatch} examDate={examDate} />}
+          {tab === 'today' && (
+            <TodayPanel state={state} dispatch={dispatch} examDate={examDate} onGoBank={startQuiz} />
+          )}
           {tab === 'progress' && <ProgressPanel state={state} examDate={examDate} />}
           {tab === 'exam' && <ExamPanel state={state} dispatch={dispatch} />}
-          {tab === 'mistake' && <MistakePanel state={state} dispatch={dispatch} onAiAnalyze={aiAnalyze} />}
+          {tab === 'mistake' && <MistakePanel state={state} dispatch={dispatch} onAiAnalyze={aiAnalyze} onAiProfile={aiProfile} />}
+          {tab === 'bank' && (quiz
+            ? <QuizRunner state={state} dispatch={dispatch} preset={quiz.preset} onClose={() => setQuiz(null)} />
+            : <QuestionBankPanel state={state} dispatch={dispatch} onStartQuiz={() => setQuiz({ preset: null })} />)}
           {tab === 'ai' && <AiPanel state={state} dispatch={dispatch} prefill={aiPrefill} clearPrefill={() => setAiPrefill(null)} />}
           {tab === 'data' && (
             <DataPanel state={state} dispatch={dispatch} examDate={examDate}

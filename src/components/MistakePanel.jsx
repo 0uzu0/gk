@@ -4,6 +4,8 @@ import Lightbox from './Lightbox.jsx';
 import { SUB_OPTIONS, ERR_OPTIONS, MISTAKE_STATES } from '../lib/stats.js';
 import { imgStore, compressImageFile } from '../lib/imgstore.js';
 import { todayStr, fmtMD } from '../lib/dates.js';
+import { dueMistakes } from '../lib/templates.js';
+import { uid, imgId as newImgId } from '../lib/id.js';
 import { actions } from '../store/useAppState.js';
 import { useToast } from './Toast.jsx';
 
@@ -64,7 +66,7 @@ function MistakeModal({ open, onClose, onSave, initial }) {
         const ok = results.filter(Boolean);
         if (ok.length !== files.length) toast('部分图片处理失败（超8MB或格式不支持）');
         if (!ok.length) { e.target.value = ''; return; }
-        setPreview(p => p.concat(ok.map(dataUrl => ({ id: 'tmp_' + Math.random().toString(36).slice(2, 8), dataUrl }))));
+        setPreview(p => p.concat(ok.map(dataUrl => ({ id: uid('tmp'), dataUrl }))));
         e.target.value = '';
       });
   };
@@ -79,8 +81,8 @@ function MistakeModal({ open, onClose, onSave, initial }) {
       const ids = [];
       for (const p of preview) {
         let id = p.id;
-        if (id.startsWith('tmp_')) {
-          id = 'img_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
+        if (String(id).startsWith('tmp_')) {
+          id = newImgId(0);
           await imgStore.put(id, p.dataUrl);
         }
         ids.push(id);
@@ -145,11 +147,14 @@ function MistakeModal({ open, onClose, onSave, initial }) {
   );
 }
 
-export default function MistakePanel({ state, dispatch, onAiAnalyze }) {
+export default function MistakePanel({ state, dispatch, onAiAnalyze, onAiProfile }) {
   const toast = useToast();
   const [filter, setFilter] = useState({ sub: '', err: '', st: '' });
   const [modal, setModal] = useState(null);
   const [lb, setLb] = useState(null); // {imgs:[dataUrl], index}
+
+  /* 今日到期重做（间隔复习 1/3/7/15 天）：与今日打卡的复习任务同源 */
+  const dueToday = useMemo(() => dueMistakes(state.mistakes, todayStr()), [state.mistakes]);
 
   const list = useMemo(() => {
     let l = state.mistakes.slice().sort((a, b) => (a.date < b.date ? 1 : -1));
@@ -182,7 +187,7 @@ export default function MistakePanel({ state, dispatch, onAiAnalyze }) {
       dispatch(actions.updateMistake(modal.editId, data));
       toast('错题已更新');
     } else {
-      dispatch(actions.addMistake({ id: 'mk_' + Math.random().toString(36).slice(2, 8), ...data }));
+      dispatch(actions.addMistake({ id: uid('mk'), ...data }));
       toast('错题已添加');
     }
     setModal(null);
@@ -192,8 +197,20 @@ export default function MistakePanel({ state, dispatch, onAiAnalyze }) {
     <div>
       <div className="card">
         <div className="today-head">
-          <div className="d">📌 错题本（{state.mistakes.length}）</div>
-          <button className="btn sm" onClick={() => setModal({ editId: null })}>＋ 添加错题</button>
+          <div>
+            <div className="d">📌 错题本（{state.mistakes.length}）</div>
+            {dueToday.length > 0 && (
+              <div className="t-meta" style={{ marginTop: 4 }}>
+                <span className="state-chip" style={{ background: 'var(--gold-bg, #fff7e6)', color: 'var(--gold, #b45309)' }}>
+                  🔁 今日到期重做 {dueToday.length} 条
+                </span>
+              </div>
+            )}
+          </div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            <button className="btn ghost sm" onClick={() => onAiProfile && onAiProfile()}>✨ AI 错题画像</button>
+            <button className="btn sm" onClick={() => setModal({ editId: null })}>＋ 添加错题</button>
+          </div>
         </div>
         <div className="form-row three" style={{ marginBottom: 10 }}>
           <div><select value={filter.sub} onChange={e => setFilter({ ...filter, sub: e.target.value })}>

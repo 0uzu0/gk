@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import Modal from './Modal.jsx';
 import { examTrend, GOAL, MODULES, SHENLUN_PARTS, SUB_OPTIONS, ERR_OPTIONS } from '../lib/stats.js';
 import { todayStr, fmtMD, reviewWeekLabel } from '../lib/dates.js';
+import { uid } from '../lib/id.js';
 import { actions } from '../store/useAppState.js';
 import { useToast } from './Toast.jsx';
 
@@ -120,14 +121,22 @@ export default function ExamPanel({ state, dispatch }) {
   const toast = useToast();
   const [modal, setModal] = useState(null); // null | {edit: exam|null}
   const exams = examTrend(state.exams).slice().reverse(); // 最新在前
-  const reviews = state.reviews.slice().sort((a, b) => (a.id > b.id ? -1 : 1));
+  /* 周复盘排序：此前按 id 字符串排序，而 id 是 rv_+随机串，顺序实为随机。
+     改为「日期倒序 → 周标签倒序 → id 倒序」，老数据无 date 时也能稳定排序。 */
+  const reviews = state.reviews.slice().sort((a, b) => {
+    const da = String(a.date || ''), db = String(b.date || '');
+    if (da !== db) return da < db ? 1 : -1;
+    const wa = String(a.week || ''), wb = String(b.week || '');
+    if (wa !== wb) return wa < wb ? 1 : -1;
+    return String(a.id) < String(b.id) ? 1 : -1;
+  });
 
   const [reviewOpen, setReviewOpen] = useState(false);
   const [rev, setRev] = useState({ done: '', rate: '', focus: '' });
 
   const saveExam = (exam) => {
     if (exam.id) dispatch({ type: 'UPDATE_EXAM', id: exam.id, patch: exam });
-    else dispatch({ type: 'ADD_EXAM', exam: { ...exam, id: 'ex_' + Math.random().toString(36).slice(2, 8) } });
+    else dispatch({ type: 'ADD_EXAM', exam: { ...exam, id: uid('ex') } });
     setModal(null);
     toast('模考已保存');
   };
@@ -135,7 +144,8 @@ export default function ExamPanel({ state, dispatch }) {
   const submitReview = () => {
     if (!rev.done.trim()) { toast('请填写本周完成情况'); return; }
     dispatch(actions.addReview({
-      id: 'rv_' + Math.random().toString(36).slice(2, 8),
+      id: uid('rv'),
+      date: todayStr(),
       week: reviewWeekLabel(todayStr()),
       done: rev.done.trim(),
       rate: Number(rev.rate) || 0,
